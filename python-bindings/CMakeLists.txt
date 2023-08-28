@@ -1,14 +1,17 @@
+CMAKE_MINIMUM_REQUIRED(VERSION 3.1.0 FATAL_ERROR)
+set (CMAKE_CXX_STANDARD 11)
 
-FetchContent_Declare(
-  pybind11
-  GIT_REPOSITORY https://github.com/pybind/pybind11.git
-  GIT_TAG v2.10.0
-)
-FetchContent_MakeAvailable(pybind11)
+include_directories(
+  ${INCLUDE_DIRECTORIES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../contrib/relic/include
+  ${CMAKE_BINARY_DIR}/contrib/relic/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../contrib/catch
+  )
 
 pybind11_add_module(blspy ${CMAKE_CURRENT_SOURCE_DIR}/pythonbindings.cpp)
-target_link_libraries(blspy PRIVATE bls)
 
-if((NOT MSVC) AND (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin"))
-  target_link_options(blspy PRIVATE -Wl,-Bsymbolic)
+if (SODIUM_FOUND)
+  target_link_libraries(blspy PRIVATE blstmp relic_s sodium)
+else()
+  target_link_libraries(blspy PRIVATE blstmp relic_s)
 endif()

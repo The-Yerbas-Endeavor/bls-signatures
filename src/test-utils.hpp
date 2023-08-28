@@ -1,4 +1,4 @@
-// Copyright 2020 Chia Network Inc
+// Copyright 2018 Chia Network Inc
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,6 @@ using std::vector;
 using std::cout;
 using std::endl;
 
-#ifdef _MSC_VER
-#define __PRETTY_FUNCTION__ __FUNCSIG__
-#endif
 #define STR(x) #x
 #define ASSERT(x) if (!(x)) { printf("BLS assertion failed: (%s), function %s, file %s, line %d.\n", STR(x), __PRETTY_FUNCTION__, __FILE__, __LINE__); abort(); }
 
@@ -33,7 +30,7 @@ std::chrono::time_point<std::chrono::steady_clock> startStopwatch() {
 
 void endStopwatch(string testName,
                   std::chrono::time_point<std::chrono::steady_clock> start,
-                  int numIters) {
+                  double numIters) {
     auto end = std::chrono::steady_clock::now();
     auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             end - start);
@@ -41,16 +38,13 @@ void endStopwatch(string testName,
     cout << endl << testName << endl;
     cout << "Total: " << numIters << " runs in " << now_ms.count()
          << " ms" << endl;
-    cout << "Avg: " << now_ms.count() / static_cast<double>(numIters)
+    cout << "Avg: " << now_ms.count() / numIters
          << " ms" << endl;
 }
 
-std::vector<uint8_t> getRandomSeed() {
-    uint8_t buf[32];
-
-    for (int i = 0; i < 32; i++)
-        buf[i] = rand ();
-
-    std::vector<uint8_t> ret(buf, buf + 32);
-    return ret;
+void getRandomSeed(uint8_t* seed) {
+    bn_t r;
+    bn_new(r);
+    bn_rand(r, BN_POS, 256);
+    bn_write_bin(seed, 32, r);
 }

@@ -1,4 +1,4 @@
-// Copyright 2020 Chia Network Inc
+// Copyright 2018 Chia Network Inc
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,44 +15,24 @@
 #ifndef SRC_BLSUTIL_HPP_
 #define SRC_BLSUTIL_HPP_
 
-#include <algorithm>
+#include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <string>
-#include <cstring>
-#include <vector>
-#include <array>
+#include <cstdlib>
+
+#include "relic_conf.h"
+
+#if defined GMP && ARITH == GMP
+#include <gmp.h>
+#endif
+
+#include "relic.h"
+#include "relic_test.h"
 
 namespace bls {
 
 class BLS;
-
-class Bytes {
-    const uint8_t* pData;
-    const size_t nSize;
-
-public:
-    Bytes(const uint8_t* pDataIn, const size_t nSizeIn)
-        : pData(pDataIn), nSize(nSizeIn)
-    {
-    }
-    Bytes(const std::vector<uint8_t>& vecBytes)
-        : pData(vecBytes.data()), nSize(vecBytes.size())
-    {
-    }
-    template <size_t N>
-    Bytes(const std::array<uint8_t, N>& a)
-        : pData(a.data()), nSize(N)
-    {
-    }
-
-    inline const uint8_t* begin() const { return pData; }
-    inline const uint8_t* end() const { return pData + nSize; }
-
-    inline size_t size() const { return nSize; }
-
-    const uint8_t& operator[](const int nIndex) const { return pData[nIndex]; }
-};
 
 class Util {
  public:
@@ -61,53 +41,26 @@ class Util {
  public:
     static void Hash256(uint8_t* output, const uint8_t* message,
                         size_t messageLen) {
-        blst_sha256(output, message, messageLen);
+        md_map_sh256(output, message, messageLen);
     }
 
-static void md_hmac(uint8_t *mac, const uint8_t *in, int in_len, const uint8_t *key,
-    int key_len) {
-  #define block_size 64
-  #define RLC_MD_LEN 32
-    uint8_t opad[block_size + RLC_MD_LEN];
-    uint8_t *ipad = (uint8_t *)malloc(block_size + in_len);
-    uint8_t _key[block_size];
-
-    if (ipad == NULL)
-        throw std::runtime_error("out of memory");
-
-    if (key_len > block_size) {
-        Hash256(_key, key, key_len);
-        key = _key;
-        key_len = RLC_MD_LEN;
-    }
-
-    memcpy(_key, key, key_len);
-    memset(_key + key_len, 0, block_size - key_len);
-    key = _key;
-
-    for (int i = 0; i < block_size; i++) {
-        opad[i] = 0x5C ^ key[i];
-        ipad[i] = 0x36 ^ key[i];
-    }
-    memcpy(ipad + block_size, in, in_len);
-    Hash256(opad + block_size, ipad, block_size + in_len);
-    Hash256(mac, opad, block_size + RLC_MD_LEN);
-
-    free(ipad);
-}
+    template<size_t S>
+    struct BytesCompare {
+        bool operator() (const uint8_t* lhs, const uint8_t* rhs) const {
+            for (size_t i = 0; i < S; i++) {
+                if (lhs[i] < rhs[i]) return true;
+                if (lhs[i] > rhs[i]) return false;
+            }
+            return false;
+        }
+    };
+    typedef struct BytesCompare<32> BytesCompare32;
+    typedef struct BytesCompare<80> BytesCompare80;
 
     static std::string HexStr(const uint8_t* data, size_t len) {
         std::stringstream s;
         s << std::hex;
-        for (size_t i=0; i < len; ++i)
-            s << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
-        return s.str();
-    }
-
-    static std::string HexStr(const std::vector<uint8_t> &data) {
-        std::stringstream s;
-        s << std::hex;
-        for (size_t i=0; i < data.size(); ++i)
+        for (int i=0; i < len; ++i)
             s << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
         return s.str();
     }
@@ -126,38 +79,6 @@ static void md_hmac(uint8_t *mac, const uint8_t *in, int in_len, const uint8_t *
      */
     static void SecFree(void* ptr) {
         secureFreeCallback(ptr);
-    }
-
-    /*
-     * Converts one hex character to an int.
-     */
-    static uint8_t char2int(const char input) {
-        if(input >= '0' && input <= '9')
-            return input - '0';
-        if(input >= 'A' && input <= 'F')
-            return input - 'A' + 10;
-        if(input >= 'a' && input <= 'f')
-            return input - 'a' + 10;
-        throw std::invalid_argument("Invalid input string");
-    }
-
-    /*
-     * Converts a hex string into a vector of bytes.
-     */
-    static std::vector<uint8_t> HexToBytes(const std::string hex) {
-        if (hex.size() % 2 != 0) {
-            throw std::invalid_argument("Invalid input string, length must be multple of 2");
-        }
-        std::vector<uint8_t> ret = std::vector<uint8_t>();
-        size_t start_at = 0;
-        if (hex.rfind("0x", 0) == 0 || hex.rfind("0x", 0) == 0) {
-            start_at = 2;
-        }
-
-        for (size_t i = start_at; i < hex.size(); i += 2) {
-            ret.push_back(char2int(hex[i]) * 16 + char2int(hex[i+1]));
-        }
-        return ret;
     }
 
     /*
@@ -180,10 +101,6 @@ static void md_hmac(uint8_t *mac, const uint8_t *in, int in_len, const uint8_t *
             sum += addend;
         }
         return sum;
-    }
-
-    static bool HasOnlyZeros(const Bytes& bytes) {
-        return std::all_of(bytes.begin(), bytes.end(), [](uint8_t byte){ return byte == 0x00; });
     }
 
  private:

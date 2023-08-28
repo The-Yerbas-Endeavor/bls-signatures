@@ -1,90 +1,75 @@
+CMAKE_MINIMUM_REQUIRED(VERSION 3.1.0 FATAL_ERROR)
+set (CMAKE_CXX_STANDARD 11)
+
 file(GLOB HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.hpp)
 source_group("SrcHeaders" FILES ${HEADERS})
 
-list(APPEND bls_sources
-  ${HEADERS}
-  privatekey.cpp
-  bls.cpp
-  elements.cpp
-  schemes.cpp
-  ${blst_SOURCE_DIR}/src/server.c
+include_directories(
+  ${INCLUDE_DIRECTORIES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../contrib/relic/include
+  ${CMAKE_BINARY_DIR}/contrib/relic/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../contrib/catch
+  )
+
+set(C_LIB ${CMAKE_BINARY_DIR}/libchiabls.a)
+
+add_library(chiabls ${CMAKE_CURRENT_SOURCE_DIR}/chaincode.cpp)
+
+add_library(chiablstmp ${HEADERS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/extendedpublickey.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/extendedprivatekey.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/chaincode.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/signature.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/publickey.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/privatekey.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/bls.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/aggregationinfo.cpp
 )
 
-if(MSVC)
-  list(APPEND bls_sources
-    ${blst_SOURCE_DIR}/build/win64/add_mod_256-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/add_mod_384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/add_mod_384x384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/ct_inverse_mod_256-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/ct_is_square_mod_384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/ctq_inverse_mod_384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/ctx_inverse_mod_384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/div3w-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/mulq_mont_256-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/mulq_mont_384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/mulx_mont_256-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/mulx_mont_384-x86_64.asm
-    ${blst_SOURCE_DIR}/build/win64/sha256-x86_64.asm
-  )
+set(OPREFIX object_)
+find_library(GMP_NAME NAMES libgmp.a gmp)
+find_library(SODIUM_NAME NAMES libsodium.a sodium)
+
+set(LIBRARIES_TO_COMBINE
+      COMMAND mkdir ${OPREFIX}$<TARGET_NAME:chiablstmp> || true && cd ${OPREFIX}$<TARGET_NAME:chiablstmp> &&  ${CMAKE_AR} -x $<TARGET_FILE:chiablstmp>
+      COMMAND mkdir ${OPREFIX}$<TARGET_NAME:relic_s> || true && cd ${OPREFIX}$<TARGET_NAME:relic_s> &&  ${CMAKE_AR} -x $<TARGET_FILE:relic_s>
+)
+
+#if (GMP_FOUND)
+#  list(APPEND LIBRARIES_TO_COMBINE COMMAND mkdir ${OPREFIX}gmp || true && cd ${OPREFIX}gmp &&  ${CMAKE_AR} -x ${GMP_NAME})
+#endif()
+if (SODIUM_FOUND)
+  list(APPEND LIBRARIES_TO_COMBINE COMMAND mkdir ${OPREFIX}sodium || true && cd ${OPREFIX}sodium &&  ${CMAKE_AR} -x ${SODIUM_NAME})
+endif()
+
+add_custom_target(combined_custom
+        ${LIBRARIES_TO_COMBINE}
+        COMMAND ${CMAKE_AR} -rs ${C_LIB} ${OPREFIX}*/*${CMAKE_C_OUTPUT_EXTENSION}
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        DEPENDS chiablstmp relic_s
+        )
+
+add_library(combined STATIC IMPORTED GLOBAL)
+add_dependencies(combined combined_custom)
+
+target_link_libraries(chiabls combined)
+
+set_target_properties(combined
+        PROPERTIES
+        IMPORTED_LOCATION ${C_LIB}
+        )
+
+file(GLOB includes "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp")
+install(FILES ${includes} DESTINATION include/chiabls)
+install(FILES ${C_LIB} DESTINATION lib)
+
+add_executable(runtest test.cpp)
+add_executable(runbench test-bench.cpp)
+
+if (SODIUM_FOUND)
+  target_link_libraries(runtest chiablstmp relic_s sodium)
+  target_link_libraries(runbench chiablstmp relic_s sodium)
 else()
-  list(APPEND bls_sources
-    ${blst_SOURCE_DIR}/build/assembly.S
-  )
-  add_compile_options(-fno-builtin)
-  add_compile_options(-fPIC)
-  add_compile_options(-Wall)
-  add_compile_options(-Wextra)
-  if((CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)") AND (NOT EMSCRIPTEN))
-    add_compile_options(-mno-avx)
-  endif()
-endif()
-
-add_library(bls ${bls_sources})
-target_include_directories(bls PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${blst_SOURCE_DIR}
-)
-target_compile_definitions(bls PRIVATE __BLST_PORTABLE__ BLSALLOC_SODIUM=1)
-target_link_libraries(bls PUBLIC sodium)
-
-if(WITH_COVERAGE)
-  target_compile_options(bls PRIVATE --coverage)
-  target_link_options(bls PRIVATE --coverage)
-endif()
-
-install(DIRECTORY ${blst_SOURCE_DIR}/include/ DESTINATION include/chiabls)
-install(DIRECTORY ${blst_BINARY_DIR}/include/ DESTINATION include/chiabls)
-install(FILES ${HEADERS} DESTINATION include/chiabls)
-install(FILES $<TARGET_FILE:bls> DESTINATION lib)
-
-if(BUILD_BLS_TESTS)
-  FetchContent_Declare(
-    Catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG v3.3.2
-  )
-  FetchContent_MakeAvailable(Catch2)
-  find_package(Threads REQUIRED)
-  add_executable(runtest test.cpp)
-
-  if(EMSCRIPTEN)
-    target_link_options(runtest PRIVATE "-sEXPORTED_FUNCTIONS=_malloc")
-  endif()
-
-  target_link_libraries(runtest
-    PRIVATE
-    bls
-    Catch2::Catch2
-    Threads::Threads
-  )
-
-  if(WITH_COVERAGE)
-    target_compile_options(runtest PRIVATE --coverage)
-    target_link_options(runtest PRIVATE --coverage)
-  endif()
-endif()
-
-if(BUILD_BLS_BENCHMARKS)
-  add_executable(runbench test-bench.cpp)
-  target_link_libraries(runbench PRIVATE bls)
+  target_link_libraries(runtest chiablstmp relic_s)
+  target_link_libraries(runbench chiablstmp relic_s)
 endif()
